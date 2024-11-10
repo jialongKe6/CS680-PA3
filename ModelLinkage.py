@@ -353,6 +353,7 @@ class DisplayableCube(Displayable):
         gl.glPopMatrix()
         gl.glEndList()
 
+
 class Predator(Component, Animation, EnvironmentObject):
     """
     Define a predator object (hook)
@@ -381,67 +382,101 @@ class Predator(Component, Animation, EnvironmentObject):
             comp.setRotateExtent(comp.uAxis, 0, 50)
             self.rotation_speed.append([1, 0, 0])
 
-        self.translation_speed = Point([0, 0, 0])
+        self.translation_speed = Point([random.random() - 0.5 for _ in range(3)]).normalize() * 0.05
         self.bound_center = Point((0, 0, 0))
         self.bound_radius = 0.2
         self.species_id = 2
+
+        self.target_prey = None  # Currently pursued prey
+        self.perception_distance = 3.5  # Perception range, adjustable as needed
+        self.catch_distance = 0.1  # Catch distance, defines success when close enough to prey
+
         self.initialize()
 
     def animationUpdate(self):
-        # create period animation for creature joints
+        # Create a periodic animation for predator joints
         for i, comp in enumerate(self.components):
             comp.rotate(self.rotation_speed[i][0], comp.uAxis)
-            if comp.uAngle in comp.uRange:  # rotation reached the limit
+            if comp.uAngle in comp.uRange:
                 self.rotation_speed[i][0] *= -1
 
-        for item in self.env_obj_list:
-            # Collision detection (tank)
-            if isinstance(item, Tank):
-                if not (item.tank_dimensions[0] / 2 - self.bound_radius) > (
-                        self.current_position[0] + self.translation_speed[0]) > (
-                               -item.tank_dimensions[0] / 2 + self.bound_radius):
-                    self.translation_speed.coords[0] *= -1
-                if not (item.tank_dimensions[1] / 2 - self.bound_radius > self.current_position[1] +
-                        self.translation_speed[1] > -item.tank_dimensions[1] / 2 + self.bound_radius):
-                    self.translation_speed.coords[1] *= -1
-                if not (item.tank_dimensions[2] / 2 - self.bound_radius > self.current_position[2] +
-                        self.translation_speed[2] > -item.tank_dimensions[2] / 2 + self.bound_radius):
-                    self.translation_speed.coords[2] *= -1
+        tank = None  # For storing the tank object
 
-            # Moving direction
-            elif isinstance(item, EnvironmentObject):
-                if item.species_id == 1:
-                    # Apply Gaussian potential
-                    self.translation_speed += (item.current_position - self.current_position) * math.exp(
-                        -1*pow((item.current_position - self.current_position).norm(), 2))
-                elif item.species_id == 0:
-                    self.translation_speed += (item.current_position - self.current_position) * math.exp(
-                        -1*pow((item.current_position - self.current_position).norm(), 2))
+        # If there is no current target or the target is invalid, find a new target
+        if self.target_prey is None or self.target_prey.vanish_flag:
+            min_distance_prey = float('inf')
+            min_distance_food = float('inf')
+            closest_food = None
 
-            # Collision detection (creature)
-            if isinstance(item, EnvironmentObject):
-                # If item is a predator, bounce back.
-                if item.species_id == 2 and item != self:
-                    if (item.current_position - self.current_position).norm() <= (
-                            item.bound_radius + self.bound_radius):
-                        self.translation_speed.reflect = self.translation_speed.reflect(
-                            item.current_position - self.current_position)
+            # Traverse environment objects to find prey and food
+            for item in self.env_obj_list:
+                if isinstance(item, Tank):
+                    tank = item  # Store tank object for wall collision handling later
+                elif isinstance(item, EnvironmentObject):
+                    if item.species_id == 1:  # Find prey
+                        distance = (item.current_position - self.current_position).norm()
+                        if distance < min_distance_prey and distance <= self.perception_distance:
+                            min_distance_prey = distance
+                            self.target_prey = item  # Lock onto a new prey target
+                    elif item.species_id == 0:  # Find food
+                        distance = (item.current_position - self.current_position).norm()
+                        if distance < min_distance_food and distance <= self.perception_distance:
+                            min_distance_food = distance
+                            closest_food = item  # Find the nearest food
 
-        self.local_n_vector = self.translation_speed.normalize()
-        self.local_v_vector = self.local_n_vector.cross3d(self.up_vector).normalize()
-        self.local_u_vector = self.local_n_vector.cross3d(self.local_v_vector).normalize()
-        # Use rotation_matrix to keep object's facing direction the same with its moving direction
-        self.pre_rotation_matrix = [
-            [self.local_n_vector.coords[0], self.local_n_vector.coords[1], self.local_n_vector[2], 0],
-            [self.local_v_vector.coords[0], self.local_v_vector.coords[1], self.local_v_vector[2], 0],
-            [self.local_u_vector.coords[0], self.local_u_vector.coords[1], self.local_u_vector[2], 0],
-            [0, 0, 0, 1]
-        ]
+            # If no prey is found, and food is found, set food as the target
+            if self.target_prey is None and closest_food is not None:
+                self.target_prey = closest_food  # Set food as the target
 
-        self.translation_speed = self.translation_speed.normalize() * 0.01
+        # Handle logic for pursuing prey or eating food
+        if self.target_prey is not None:
+            # Get direction to target and set speed
+            direction_to_target = (self.target_prey.current_position - self.current_position).normalize()
+            self.translation_speed = direction_to_target * 0.015  # Predator speed
+
+            # Check if target is caught
+            distance_to_prey = (self.target_prey.current_position - self.current_position).norm()
+            if distance_to_prey <= self.catch_distance:
+                # Successful catch, mark target as vanished
+                self.target_prey.vanish_flag = True
+                self.target_prey = None  # Unlock target
+
+        # If there is no target, set a fixed random direction
+        if self.target_prey is None and not hasattr(self, 'patrol_direction'):
+            # Generate a random direction for initial patrol
+            self.patrol_direction = Point([random.uniform(-1, 1) for _ in range(3)]).normalize() * 0.005
+
+        # Set current patrol direction as speed
+        if self.target_prey is None:
+            self.translation_speed = self.patrol_direction
+
+        # Handle wall collision
+        if tank is not None:
+            next_position = self.current_position + self.translation_speed
+            for i in range(3):  # For x, y, z axes
+                if not (-tank.tank_dimensions[i] / 2 + self.bound_radius <
+                        next_position[i] <
+                        tank.tank_dimensions[i] / 2 - self.bound_radius):
+                    # Reverse speed on the corresponding axis to achieve bounce and change patrol direction
+                    self.translation_speed.coords[i] *= -1
+                    self.patrol_direction = self.translation_speed  # Update patrol direction
+
+        # Update orientation (keep facing movement direction)
+        if self.translation_speed.norm() > 0:
+            self.local_n_vector = self.translation_speed.normalize()
+            self.local_v_vector = self.local_n_vector.cross3d(self.up_vector).normalize()
+            self.local_u_vector = self.local_n_vector.cross3d(self.local_v_vector).normalize()
+            self.pre_rotation_matrix = [
+                [self.local_n_vector.coords[0], self.local_n_vector.coords[1], self.local_n_vector.coords[2], 0],
+                [self.local_v_vector.coords[0], self.local_v_vector.coords[1], self.local_v_vector.coords[2], 0],
+                [self.local_u_vector.coords[0], self.local_u_vector.coords[1], self.local_u_vector.coords[2], 0],
+                [0, 0, 0, 1]
+            ]
+
+        # Update position
         self.current_position = self.current_position + self.translation_speed
+        self.bound_center += self.translation_speed  # Update boundary center
         self.update()
-
 
 class Prey(Component, Animation, EnvironmentObject):
     """
@@ -475,6 +510,7 @@ class Prey(Component, Animation, EnvironmentObject):
         self.components = body.components + rightArm.components + leftArm.components + leftLeg.components + rightLeg.components
         self.addChild(body)
         self.rotation_speed = []
+        self.collision_cooldown = 0
 
         for i in range(4):
             self.components[i].setRotateExtent(self.components[i].uAxis, -45, 45)
@@ -492,70 +528,139 @@ class Prey(Component, Animation, EnvironmentObject):
         self.initialize()
 
     def animationUpdate(self):
-        # create period animation for creature joints
+        # Update prey "walking motion" animation
         for i, comp in enumerate(self.components):
             comp.rotate(self.rotation_speed[i][0], comp.uAxis)
-            if comp.uAngle in comp.uRange:  # rotation reached the limit
-                self.rotation_speed[i][0] *= -1
+            if comp.uAngle in comp.uRange:
+                self.rotation_speed[i][0] *= -1  # Reverse direction when rotation reaches limit
 
+        # Update cooldown timer
+        if self.collision_cooldown > 0:
+            self.collision_cooldown -= 1  # Reduce cooldown timer each frame
+
+        closest_food = None
+        min_distance_food = float('inf')
+        is_being_chased = False
+        closest_predator = None
+        min_distance_predator = float('inf')
+        chase_distance = 0.5  # Detection distance for pursuit, adjustable as needed
+        tank = None  # For storing the tank object
+
+        # Traverse environment objects to detect predators and food, store tank object
         for item in self.env_obj_list:
-            # Collision detection (tank)
             if isinstance(item, Tank):
-                if not (item.tank_dimensions[0] / 2 - self.bound_radius) > (
-                        self.current_position[0] + self.translation_speed[0]) > (
-                               -item.tank_dimensions[0] / 2 + self.bound_radius):
-                    self.translation_speed.coords[0] *= -1
-                    break
-                if not (item.tank_dimensions[1] / 2 - self.bound_radius > self.current_position[1] +
-                        self.translation_speed[1] > -item.tank_dimensions[1] / 2 + self.bound_radius):
-                    self.translation_speed.coords[1] *= -1
-                    break
-                if not (item.tank_dimensions[2] / 2 - self.bound_radius > self.current_position[2] +
-                        self.translation_speed[2] > -item.tank_dimensions[2] / 2 + self.bound_radius):
-                    self.translation_speed.coords[2] *= -1
-                    break
-
+                tank = item  # Store tank object for wall collision handling later
             elif isinstance(item, EnvironmentObject):
-                # If item is a predator.
-                if item.species_id == 2:
-                    # If collide, remove prey.
-                    if (item.current_position - self.current_position).norm() <= (
-                            item.bound_radius + self.bound_radius):
-                        self.vanish_flag = True
-                # If item is a prey.
+                if item.species_id == 2:  # Predator
+                    distance = (item.current_position - self.current_position).norm()
+                    if distance < min_distance_predator:
+                        min_distance_predator = distance
+                        closest_predator = item  # Find the nearest predator
+                    if distance < chase_distance:
+                        is_being_chased = True  # Being pursued by a predator
+                    if distance <= (item.bound_radius + self.bound_radius):
+                        self.vanish_flag = True  # Caught by a predator, disappear
                 elif item.species_id == 1 and item != self:
-                    # If collide, bounce back.
+                    # Collision with other prey; handle collision bounce if cooldown has ended
                     if (item.current_position - self.current_position).norm() <= (
-                            item.bound_radius + self.bound_radius):
+                            item.bound_radius + self.bound_radius) and self.collision_cooldown == 0:
+                        # Handle collision bounce to avoid frequent direction changes causing jitter
                         self.translation_speed = self.translation_speed.reflect(
                             item.current_position - self.current_position)
-                        item.translation_speed = self.translation_speed.reflect(
-                            item.current_position - self.current_position)
-                        break
-                # If item is a food.
-                if item.species_id == 0:
-                    # Change moving direction toward the food
-                    self.translation_speed += (item.current_position - self.current_position) * math.exp(
-                        -1*pow((item.current_position - self.current_position).norm(), 2))
+                        item.translation_speed = item.translation_speed.reflect(
+                            self.current_position - item.current_position)
+                        # Set collision cooldown to avoid frequent direction adjustments
+                        self.collision_cooldown = 10
+                        item.collision_cooldown = 10
+                elif item.species_id == 0:  # Food
+                    # Only choose food that is not locked by another prey
+                    if not hasattr(item, 'locked_by') or item.locked_by is None or item.locked_by == self:
+                        distance = (item.current_position - self.current_position).norm()
+                        if distance < min_distance_food:
+                            min_distance_food = distance
+                            closest_food = item  # Find the nearest available food
 
-        self.translation_speed = self.translation_speed.normalize() * 0.02
-        self.bound_center += self.translation_speed
+        if is_being_chased and closest_predator is not None:
+            # If being pursued, prioritize fleeing, set speed away from the predator
+            direction_away_from_predator = (self.current_position - closest_predator.current_position).normalize()
+            self.translation_speed = direction_away_from_predator * 0.02  # Escape speed, adjustable
+            # Unlock the food
+            if closest_food and hasattr(closest_food, 'locked_by') and closest_food.locked_by == self:
+                closest_food.locked_by = None
 
-        self.local_z_vector = self.translation_speed.normalize()
-        self.local_x_vector = self.local_z_vector.cross3d(self.up_vector).normalize()
-        self.local_y_vector = self.local_z_vector.cross3d(self.local_x_vector).normalize()
+        elif closest_food is not None:
+            # If not pursued, move towards the nearest food
+            if hasattr(closest_food, 'locked_by') and closest_food.locked_by is None:
+                closest_food.locked_by = self  # Lock food to itself
+            direction_to_food = (closest_food.current_position - self.current_position).normalize()
+            self.translation_speed += direction_to_food * 0.005  # Adjust speed increment as needed
+            self.translation_speed = self.translation_speed.normalize() * 0.02
 
-        # Use rotation_matrix to keep object's facing direction the same with its moving direction
-        self.pre_rotation_matrix = [
-            [self.local_x_vector.coords[0], self.local_x_vector.coords[1], self.local_x_vector[2], 0],
-            [self.local_y_vector.coords[0], self.local_y_vector.coords[1], self.local_y_vector[2], 0],
-            [self.local_z_vector.coords[0], self.local_z_vector.coords[1], self.local_z_vector[2], 0],
-            [0, 0, 0, 1]
-        ]
-
+        # Update position
         self.current_position = self.current_position + self.translation_speed
-        self.update()
+        self.bound_center += self.translation_speed  # Update boundary center
 
+        # Reinforce boundary check to ensure prey stays within bounds
+        if tank is not None:
+            for i in range(3):  # For x, y, z axes
+                if self.current_position[i] > tank.tank_dimensions[i] / 2 - self.bound_radius:
+                    # Exceeds positive boundary
+                    self.current_position.coords[i] = tank.tank_dimensions[i] / 2 - self.bound_radius
+                    if is_being_chased:
+                        # When cornered by a predator, choose a direction to slide along the wall
+                        self.translation_speed.coords[i] = 0
+                        wall_axes = [0, 1, 2]
+                        wall_axes.remove(i)  # Use the remaining two axes to slide along the wall
+                        direction_away_from_predator = (self.current_position - closest_predator.current_position)
+                        projected_direction = Point([direction_away_from_predator.coords[axis] for axis in wall_axes])
+
+                        if projected_direction.norm() > 0:
+                            normalized_direction = projected_direction.normalize()
+                            for idx, axis in enumerate(wall_axes):
+                                self.translation_speed.coords[axis] = normalized_direction.coords[idx] * 0.02
+                        else:
+                            # If direction cannot be determined, choose a random direction to avoid "bobbing"
+                            for axis in wall_axes:
+                                self.translation_speed.coords[axis] = random.uniform(-0.02, 0.02)
+                    else:
+                        # If not being chased, bounce back normally
+                        self.translation_speed.coords[i] *= -1
+                elif self.current_position[i] < -tank.tank_dimensions[i] / 2 + self.bound_radius:
+                    # Exceeds negative boundary
+                    self.current_position.coords[i] = -tank.tank_dimensions[i] / 2 + self.bound_radius
+                    if is_being_chased:
+                        # When cornered by a predator, choose a direction to slide along the wall
+                        self.translation_speed.coords[i] = 0
+                        wall_axes = [0, 1, 2]
+                        wall_axes.remove(i)  # Use the remaining two axes to slide along the wall
+                        direction_away_from_predator = (self.current_position - closest_predator.current_position)
+                        projected_direction = Point([direction_away_from_predator.coords[axis] for axis in wall_axes])
+
+                        if projected_direction.norm() > 0:
+                            normalized_direction = projected_direction.normalize()
+                            for idx, axis in enumerate(wall_axes):
+                                self.translation_speed.coords[axis] = normalized_direction.coords[idx] * 0.02
+                        else:
+                            # If direction cannot be determined, choose a random direction to avoid "bobbing"
+                            for axis in wall_axes:
+                                self.translation_speed.coords[axis] = random.uniform(-0.02, 0.02)
+                    else:
+                        # If not being chased, bounce back normally
+                        self.translation_speed.coords[i] *= -1
+
+        # Update orientation (keep facing movement direction)
+        if self.translation_speed.norm() > 0:
+            self.local_z_vector = self.translation_speed.normalize()
+            self.local_x_vector = self.local_z_vector.cross3d(self.up_vector).normalize()
+            self.local_y_vector = self.local_z_vector.cross3d(self.local_x_vector).normalize()
+            self.pre_rotation_matrix = [
+                [self.local_x_vector.coords[0], self.local_x_vector.coords[1], self.local_x_vector.coords[2], 0],
+                [self.local_y_vector.coords[0], self.local_y_vector.coords[1], self.local_y_vector.coords[2], 0],
+                [self.local_z_vector.coords[0], self.local_z_vector.coords[1], self.local_z_vector.coords[2], 0],
+                [0, 0, 0, 1]
+            ]
+
+        self.update()
 
 class Food(Component, Animation, EnvironmentObject):
     """
@@ -577,7 +682,7 @@ class Food(Component, Animation, EnvironmentObject):
         self.addChild(food)
         self.initialize()
 
-        self.translation_speed = Point([0, -0.006, 0])
+        self.translation_speed = Point([0, -0.02, 0])
         self.bound_center = Point((0, 0, 0))
         self.bound_radius = 0.1
         self.species_id = 0

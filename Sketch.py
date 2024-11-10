@@ -194,6 +194,12 @@ class Sketch(CanvasBase):
             # reset content of vivarium
             self.vivarium.reset()
             self.update()
+        elif chr(keycode) in "tT":
+            # reset viewing angle
+            self.viewing_quaternion = Quaternion()
+            # reset content of vivarium
+            self.vivarium.reset2()
+            self.update()
         elif chr(keycode) in "fF":
             self.vivarium.add_food()
 

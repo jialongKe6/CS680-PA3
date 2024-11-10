@@ -89,7 +89,31 @@ class Vivarium(Component, Animation):
         self.addNewObjInTank(Predator(self.parent, Point((-1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4))))
 
         self.update()
+    def reset2(self):
+        """
+        Reset the vivarium by removing all creatures and adding new ones.
+        """
+        for c in self.creatures:
+            self.delObj(c)
+        self.creatures = []
+        self.addNewObjInTank(Prey(self.parent, Point(
+            (-1.7+random.random()*3.4, -1.7+random.random()*3.4, -1.7+random.random()*3.4)), ColorType.RED))
+        # self.addNewObjInTank(Prey(self.parent, Point(
+        #     (-1.7+random.random()*3.4, -1.7+random.random()*3.4, -1.7+random.random()*3.4)), ColorType.YELLOW))
+        # self.addNewObjInTank(Prey(self.parent, Point(
+        #     (-1.7+random.random()*3.4, -1.7+random.random()*3.4, -1.7+random.random()*3.4)), ColorType.ORANGE))
+        # self.addNewObjInTank(Prey(self.parent, Point(
+        #     (-1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4)),
+        #                           ColorType.SILVER))
+        # self.addNewObjInTank(Prey(self.parent, Point(
+        #     (-1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4)),
+        #                           ColorType.GREEN))
+        # self.addNewObjInTank(Prey(self.parent, Point(
+        #     (-1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4)),
+        #                           ColorType.BLUE))
+        self.addNewObjInTank(Predator(self.parent, Point((-1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4, -1.7 + random.random() * 3.4))))
 
+        self.update()
     # This function adds a food to the vivarium
     def add_food(self):
         """
